@@ -266,7 +266,7 @@ with st.sidebar:
         df_save['meta_pay_date'] = pay_date_1
         for i in range(2):
             df_save[f'meta_inc_pay_{i}'] = st.session_state.get(f'pay_{i}', 2449.0)
-            df_save[f'meta_inc_rent_{i}'] = st.session_state.get(f'rent_{i}', 2100.0) if i == 0 else 0
+            df_save[f'meta_inc_rent_{i}'] = st.session_state.get(f'rent_{i}', 0.0) if i == 0 else 0
             df_save[f'meta_inc_other_{i}'] = st.session_state.get(f'other_{i}', 0.0)
         
         filename = f"{current_month_name}.csv"
