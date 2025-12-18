@@ -3,14 +3,12 @@ import pandas as pd
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 from github import Github
-import calendar
 import io
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="FedPay Budget Pro", page_icon="💰", layout="wide")
 
 # --- CONNECT TO GITHUB ---
-# We use st.secrets so your token isn't exposed in the code
 if "GITHUB_TOKEN" not in st.secrets or "REPO_NAME" not in st.secrets:
     st.error("⚠️ Secrets Missing!")
     st.info("You need to add GITHUB_TOKEN and REPO_NAME to your Streamlit Cloud Secrets.")
@@ -71,14 +69,17 @@ def load_last_month_data():
     if df is not None:
         df = df.fillna(0)
         
-        if 'frequency' not in df.columns:
-            df['frequency'] = 'Monthly'
-        else:
-            df['frequency'] = df['frequency'].fillna('Monthly')
+        # Ensure standard columns exist
+        if 'frequency' not in df.columns: df['frequency'] = 'Monthly'
+        else: df['frequency'] = df['frequency'].fillna('Monthly')
             
-        if 'annual_month' not in df.columns:
-            df['annual_month'] = 0
+        if 'annual_month' not in df.columns: df['annual_month'] = 0
+        if 'due_day' not in df.columns: df['due_day'] = 1
+
+        # FIX #2: SORT BILLS BY DAY TO PREVENT JUMBLING
+        df = df.sort_values(by=['due_day', 'name'])
             
+        # Restore Income settings if they exist
         if not df.empty and 'meta_pay_date' in df.columns:
             try:
                 st.session_state['restored_date'] = pd.to_datetime(df.iloc[0]['meta_pay_date']).date()
@@ -107,12 +108,12 @@ def update_bill_day(index, key_name):
 
 # --- SNOWBALL ENGINE ---
 def calculate_snowball(debts_data, extra_payment):
-    debts = sorted(debts_data, key=lambda x: x['Balance'])
+    import copy
+    debts = copy.deepcopy(debts_data)
+    debts = sorted(debts, key=lambda x: x['Balance'])
     schedule = []
     current_date = datetime.now()
     months_passed = 0
-    import copy
-    debts = copy.deepcopy(debts)
     
     while any(d['Balance'] > 0 for d in debts):
         months_passed += 1
@@ -256,13 +257,22 @@ with st.sidebar:
     current_month_name = st.text_input("Month Name", value=datetime.now().strftime("Budget_%b_%Y"))
     pay_date_1 = st.date_input("First Pay Date", st.session_state.get('restored_date', datetime.now()))
     pay_date_1 = datetime.combine(pay_date_1, datetime.min.time())
+    
+    # CALCULATE PAY DATES
     pay_date_2 = pay_date_1 + timedelta(weeks=2)
     pay_date_3 = pay_date_1 + timedelta(weeks=4)
-    show_3 = st.checkbox("Force 3-Paycheck View", value=False) or (pay_date_1.month == pay_date_3.month)
+    
+    # DETERMINE IF 3 PAYCHECKS
+    # Logic: If Pay 3 is in the SAME month as Pay 1, or forced by user
+    is_three_pay_month = (pay_date_1.month == pay_date_3.month)
+    show_3 = st.checkbox("Force 3-Paycheck View", value=is_three_pay_month)
     
     st.divider()
     if st.button("💾 Save & Close Month"):
+        # Explicitly sort bills by day before saving to keep order consistent
         df_save = pd.DataFrame(st.session_state.bills)
+        df_save = df_save.sort_values(by=['due_day', 'name'])
+        
         df_save['meta_pay_date'] = pay_date_1
         for i in range(2):
             df_save[f'meta_inc_pay_{i}'] = st.session_state.get(f'pay_{i}', 2449.0)
@@ -280,12 +290,21 @@ cols = st.columns(3 if show_3 else 2)
 pay_periods = [pay_date_1, pay_date_2]
 if show_3: pay_periods.append(pay_date_3)
 
+# Track which bills are displayed to find orphaned ones
+displayed_indices = []
+
 for i, p_date in enumerate(pay_periods):
     p_num = i + 1
-    p_end = p_date + timedelta(days=13)
+    # FIX #1: Better Date Logic
+    # Pay 1: From P1 up to P2
+    # Pay 2: From P2 up to P3 (or end of month)
+    # Pay 3: From P3 onwards
+    
+    next_date = pay_periods[i+1] if i + 1 < len(pay_periods) else p_date + timedelta(days=32)
+    
     with cols[i]:
         st.header(f"Pay #{p_num}")
-        st.caption(f"{p_date.strftime('%b %d')} - {p_end.strftime('%b %d')}")
+        st.caption(f"{p_date.strftime('%b %d')} Onwards")
         
         with st.expander("💸 Income", expanded=False):
             val_pay = st.session_state.get(f'restored_pay_{i}', 2449.0)
@@ -303,18 +322,36 @@ for i, p_date in enumerate(pay_periods):
         for idx, bill in enumerate(st.session_state.bills):
             freq = bill.get('frequency', 'Monthly')
             include = False
-            if freq == 'Every 2 Weeks': include = True
-            elif freq == 'Annual': 
-                if p_date.month == int(bill.get('annual_month', 0)) or p_end.month == int(bill.get('annual_month', 0)): include = True
-            else:
-                d = bill['due_day']
-                if (p_date.day < p_end.day and p_date.day <= d < p_end.day) or \
-                   (p_date.day > p_end.day and (d >= p_date.day or d < p_end.day)): include = True
             
-            if include: period_bills.append(idx)
+            if freq == 'Every 2 Weeks': 
+                include = True # Simplified: assumes splitting bills across checks
+            elif freq == 'Annual': 
+                if p_date.month == int(bill.get('annual_month', 0)): include = True
+            else:
+                d = int(bill['due_day'])
+                # FIX #1 LOGIC:
+                # If this is the LAST column displayed, catch everything after this date
+                is_last_col = (i == len(pay_periods) - 1)
+                
+                if not is_last_col:
+                    # Show if day is >= this pay date AND < next pay date
+                    # Handle month rollover roughly by day number
+                    if p_date.day <= d < next_date.day:
+                        include = True
+                else:
+                    # Last column: Show if day >= this pay date
+                    if d >= p_date.day:
+                        include = True
+                    # catch edge case: bills due on 1st/2nd when Pay 2 is on 28th
+                    if d < p_date.day and d < 5 and p_date.day > 20:
+                        include = True
+
+            if include: 
+                period_bills.append(idx)
+                if idx not in displayed_indices: displayed_indices.append(idx)
 
         total_bills = 0
-        if not period_bills: st.info("No bills")
+        if not period_bills: st.info("No bills due")
         else:
             for idx in period_bills:
                 b = st.session_state.bills[idx]
@@ -330,3 +367,11 @@ for i, p_date in enumerate(pay_periods):
         st.write(f"**Bills:** ${total_bills:,.2f}")
         if res > 0: st.success(f"**Left:** ${res:,.2f}")
         else: st.error(f"**Short:** ${res:,.2f}")
+
+# --- WARNING FOR ORPHANED BILLS ---
+missing_indices = [i for i in range(len(st.session_state.bills)) if i not in displayed_indices]
+if missing_indices:
+    st.warning("⚠️ Some bills are not visible in the columns above (check Due Dates vs Pay Dates):")
+    for idx in missing_indices:
+        b = st.session_state.bills[idx]
+        st.write(f"- {b['name']} (Due: {b['due_day']})")
