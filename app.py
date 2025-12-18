@@ -68,41 +68,44 @@ def load_last_month_data():
     latest_file = files[0]
 
     df = load_from_github(latest_file)
-    if df is not None:
-        df = df.fillna(0)
+    if df is None:
+        return None
 
-        if 'frequency' not in df.columns:
-            df['frequency'] = 'Monthly'
-        else:
-            df['frequency'] = df['frequency'].fillna('Monthly')
+    df = df.fillna(0)
 
-        if 'annual_month' not in df.columns:
-            df['annual_month'] = 0
-        if 'due_day' not in df.columns:
-            df['due_day'] = 1
+    if 'frequency' not in df.columns:
+        df['frequency'] = 'Monthly'
+    else:
+        df['frequency'] = df['frequency'].fillna('Monthly')
 
-        # SORTING FIX: Consistently sort by Day then Name
-        df = df.sort_values(by=['due_day', 'name'])
+    if 'annual_month' not in df.columns:
+        df['annual_month'] = 0
+    if 'due_day' not in df.columns:
+        df['due_day'] = 1
+    if 'category' not in df.columns:
+        df['category'] = "OTHER"
 
-        if not df.empty and 'meta_pay_date' in df.columns:
-            try:
-                restored_dt = pd.to_datetime(df.iloc[0]['meta_pay_date']).date()
-                st.session_state['restored_date'] = restored_dt
+    # Consistent sorting
+    df = df.sort_values(by=['due_day', 'name'])
 
-                st.session_state['restored_pay_0'] = float(df.iloc[0].get('meta_inc_pay_0', 2449.0))
-                st.session_state['restored_rent_0'] = float(df.iloc[0].get('meta_inc_rent_0', 0.0))
-                st.session_state['restored_other_0'] = float(df.iloc[0].get('meta_inc_other_0', 0.0))
+    # restore pay + income defaults
+    if not df.empty and 'meta_pay_date' in df.columns:
+        try:
+            restored_dt = pd.to_datetime(df.iloc[0]['meta_pay_date']).date()
+            st.session_state['restored_date'] = restored_dt
 
-                st.session_state['restored_pay_1'] = float(df.iloc[0].get('meta_inc_pay_1', 2449.0))
-                st.session_state['restored_rent_1'] = float(df.iloc[0].get('meta_inc_rent_1', 0.0))
-            except:
-                pass
+            st.session_state['restored_pay_0'] = float(df.iloc[0].get('meta_inc_pay_0', 2449.0))
+            st.session_state['restored_rent_0'] = float(df.iloc[0].get('meta_inc_rent_0', 0.0))
+            st.session_state['restored_other_0'] = float(df.iloc[0].get('meta_inc_other_0', 0.0))
 
-        cols_to_keep = ['name', 'amount', 'category', 'due_day', 'frequency', 'annual_month']
-        actual_cols = [c for c in cols_to_keep if c in df.columns]
-        return df[actual_cols].to_dict('records')
+            st.session_state['restored_pay_1'] = float(df.iloc[0].get('meta_inc_pay_1', 2449.0))
+            st.session_state['restored_rent_1'] = float(df.iloc[0].get('meta_inc_rent_1', 0.0))
+        except:
+            pass
 
-    return None
+    cols_to_keep = ['name', 'amount', 'category', 'due_day', 'frequency', 'annual_month']
+    actual_cols = [c for c in cols_to_keep if c in df.columns]
+    return df[actual_cols].to_dict('records')
 
 # --- DATE HELPERS (FIX BILL ALIGNMENT + INVALID DAYS) ---
 def clamp_day(year: int, month: int, day: int) -> int:
@@ -146,7 +149,7 @@ def bill_due_dates_in_window(bill: dict, window_start: datetime, window_end: dat
                 due = datetime(y, annual_month, d)
                 if window_start <= due < window_end:
                     dates.add(due)
-        # If annual_month is missing/0, it will not appear until set in UI.
+        # If annual_month is missing/0, it will not appear until set in the editor.
 
     elif freq == "Every 2 Weeks":
         # NOTE: Without an anchor date (next_due_date), we can't place biweekly bills precisely.
@@ -230,7 +233,7 @@ def get_default_bills():
         {"name": "Mortgage", "amount": 1772, "category": "HOUSING", "due_day": 1, "frequency": "Monthly", "annual_month": 0},
         {"name": "Rent", "amount": 1200, "category": "HOUSING", "due_day": 15, "frequency": "Monthly", "annual_month": 0},
         {"name": "Electricity", "amount": 346, "category": "HOUSING", "due_day": 12, "frequency": "Monthly", "annual_month": 0},
-        {"name": "Lowes", "amount": 54, "category": "Loans", "due_day": 20, "frequency": "Monthly", "annual_month": 0},
+        {"name": "Lowes", "amount": 54, "category": "LOANS", "due_day": 20, "frequency": "Monthly", "annual_month": 0},
         {"name": "AT&T Phone", "amount": 100, "category": "PHONE", "due_day": 26, "frequency": "Monthly", "annual_month": 0},
         {"name": "AT&T Internet - Home", "amount": 100, "category": "Internet", "due_day": 26, "frequency": "Monthly", "annual_month": 0},
         {"name": "AT&T Internet - Nick", "amount": 100, "category": "Internet", "due_day": 26, "frequency": "Monthly", "annual_month": 0},
@@ -240,9 +243,6 @@ def get_default_bills():
         {"name": "Car Insurance - Me", "amount": 100, "category": "Insurance", "due_day": 26, "frequency": "Monthly", "annual_month": 0},
         {"name": "Car Insurance - Mom", "amount": 100, "category": "Insurance", "due_day": 26, "frequency": "Monthly", "annual_month": 0},
         {"name": "Car Insurance - Ny", "amount": 100, "category": "Insurance", "due_day": 26, "frequency": "Monthly", "annual_month": 0},
-        # Example annuals (set annual_month so they show up)
-        # {"name": "Walmart +", "amount": 98, "category": "ENTERTAINMENT", "due_day": 2, "frequency": "Annual", "annual_month": 1},
-        # {"name": "Instacart", "amount": 99, "category": "ENTERTAINMENT", "due_day": 14, "frequency": "Annual", "annual_month": 1},
     ]
 
 if 'bills' not in st.session_state:
@@ -302,16 +302,12 @@ with st.sidebar:
         with st.form("add_bill_form"):
             new_name = st.text_input("Bill Name")
             new_amount = st.number_input("Amount ($)", min_value=0.0, step=1.0)
-            new_cat = st.selectbox("Category", ["HOUSING", "LOANS", "ENTERTAINMENT", "SAVINGS", "OTHER"])
+            new_cat = st.selectbox("Category", ["HOUSING", "LOANS", "ENTERTAINMENT", "SAVINGS", "OTHER", "PHONE", "Internet", "Insurance"])
             new_day = st.number_input("Due Day", 1, 31, 1)
             freq_val = st.selectbox("Frequency", ["Monthly", "Every 2 Weeks", "Annual"])
             annual_month_val = 0
             if freq_val == "Annual":
-                annual_month_val = st.selectbox(
-                    "Month Due",
-                    range(1, 13),
-                    format_func=lambda x: datetime(2023, x, 1).strftime("%B")
-                )
+                annual_month_val = st.selectbox("Month Due", range(1, 13), format_func=lambda x: datetime(2023, x, 1).strftime("%B"))
             if st.form_submit_button("Add Bill") and new_name:
                 st.session_state.bills.append({
                     "name": new_name,
@@ -363,7 +359,7 @@ with st.sidebar:
         for i in range(2):
             df_save[f'meta_inc_pay_{i}'] = st.session_state.get(f'pay_{i}', 2449.0)
 
-            # ✅ USER REQUESTED CHANGE (line ~355 in your file)
+            # ✅ Requested: rent defaults to 0.0
             df_save[f'meta_inc_rent_{i}'] = st.session_state.get(f'rent_{i}', 0.0) if i == 0 else 0
 
             df_save[f'meta_inc_other_{i}'] = st.session_state.get(f'other_{i}', 0.0)
@@ -374,9 +370,66 @@ with st.sidebar:
                 st.success(f"Saved {filename}!")
                 st.balloons()
 
+# --- CURRENT BUDGET DISPLAY ---
 st.title("📊 Current Budget")
 
-cols = st.columns(3 if show_3 else 2)
+# --------- BILL MASTER EDITOR (click-to-edit; change category/frequency without deleting) ----------
+CATEGORY_OPTIONS = ["HOUSING", "LOANS", "ENTERTAINMENT", "SAVINGS", "OTHER", "PHONE", "Internet", "Insurance"]
+FREQ_OPTIONS = ["Monthly", "Every 2 Weeks", "Annual"]
+
+with st.expander("✏️ Edit Bills (No Deleting Needed)", expanded=False):
+    bills_df = pd.DataFrame(st.session_state.bills)
+
+    # Ensure required columns exist
+    for col, default in {
+        "name": "",
+        "amount": 0.0,
+        "category": "OTHER",
+        "due_day": 1,
+        "frequency": "Monthly",
+        "annual_month": 0,
+    }.items():
+        if col not in bills_df.columns:
+            bills_df[col] = default
+
+    edited_df = st.data_editor(
+        bills_df,
+        num_rows="dynamic",
+        use_container_width=True,
+        column_config={
+            "name": st.column_config.TextColumn("Bill Name", required=True),
+            "amount": st.column_config.NumberColumn("Amount ($)", min_value=0.0, step=1.0, format="%.2f"),
+            "category": st.column_config.SelectboxColumn("Category", options=CATEGORY_OPTIONS),
+            "due_day": st.column_config.NumberColumn("Due Day", min_value=1, max_value=31, step=1),
+            "frequency": st.column_config.SelectboxColumn("Frequency", options=FREQ_OPTIONS),
+            "annual_month": st.column_config.SelectboxColumn(
+                "Annual Month",
+                options=[0] + list(range(1, 13)),
+                format_func=lambda x: "—" if x == 0 else datetime(2023, x, 1).strftime("%b"),
+                help="Set this only for Annual bills (the month it renews)"
+            ),
+        },
+        key="bill_master_editor",
+    )
+
+    # Clean / enforce rules
+    edited_df["name"] = edited_df["name"].fillna("").astype(str)
+    edited_df["due_day"] = edited_df["due_day"].fillna(1).astype(int).clip(1, 31)
+    edited_df["amount"] = edited_df["amount"].fillna(0.0).astype(float).clip(lower=0.0)
+    edited_df["category"] = edited_df["category"].fillna("OTHER")
+    edited_df["frequency"] = edited_df["frequency"].fillna("Monthly")
+    edited_df["annual_month"] = edited_df["annual_month"].fillna(0).astype(int)
+
+    # If not Annual, wipe annual_month so it doesn't confuse the logic
+    edited_df.loc[edited_df["frequency"] != "Annual", "annual_month"] = 0
+
+    # Save back to session state
+    st.session_state.bills = edited_df.to_dict("records")
+
+    st.caption("Change **Frequency** + **Category** right here. For Annual bills, set **Annual Month** so they show up when due.")
+# -----------------------------------------------------------------------------------------------
+
+cols = st.columns(3 if 'show_3' in locals() and show_3 else 2)
 
 pay_periods = [pay_date_1, pay_date_2]
 if show_3:
@@ -412,12 +465,11 @@ for i, p_date in enumerate(pay_periods):
         st.markdown(f"**Income:** :green[${income:,.0f}]")
         st.markdown("---")
 
-        # Build list of bills due in this window
+        # Bills due in this window
         period_bills = []
         for idx, bill in enumerate(st.session_state.bills):
             due_dates = bill_due_dates_in_window(bill, window_start, window_end)
             include = len(due_dates) > 0
-
             if include:
                 period_bills.append(idx)
                 displayed_indices.add(idx)
@@ -435,7 +487,7 @@ for i, p_date in enumerate(pay_periods):
                 k_day = f"b_day_{idx}_{p_num}"
                 k_mon = f"b_mon_{idx}_{p_num}"
 
-                # Layout: Annual bills get a Month dropdown
+                # Layout: Annual bills also show Month selector
                 if freq == "Annual":
                     c1, c2, c3 = st.columns([3, 1, 1])
                 else:
@@ -445,7 +497,7 @@ for i, p_date in enumerate(pay_periods):
                 with c1:
                     st.number_input(
                         b['name'],
-                        value=float(b['amount']),
+                        value=float(b.get('amount', 0.0)),
                         step=1.0,
                         key=k_amt,
                         on_change=update_bill_amount,
@@ -455,7 +507,7 @@ for i, p_date in enumerate(pay_periods):
                 with c2:
                     st.number_input(
                         "Due",
-                        value=int(b['due_day']),
+                        value=int(b.get('due_day', 1)),
                         min_value=1,
                         max_value=31,
                         key=k_day,
@@ -464,7 +516,6 @@ for i, p_date in enumerate(pay_periods):
                     )
 
                 if freq == "Annual" and c3 is not None:
-                    # If missing, default to the current window's month so it doesn't stay invisible
                     current_val = int(b.get("annual_month", 0) or 0)
                     if current_val not in range(1, 13):
                         current_val = window_start.month
@@ -481,7 +532,7 @@ for i, p_date in enumerate(pay_periods):
                             args=(idx, k_mon)
                         )
 
-                total_bills += float(st.session_state.bills[idx]['amount'])
+                total_bills += float(st.session_state.bills[idx].get('amount', 0.0))
 
         st.markdown("---")
         res = income - total_bills
@@ -498,7 +549,7 @@ if missing_indices:
     st.warning("⚠️ The following bills are not visible in any column:")
     for idx in missing_indices:
         b = st.session_state.bills[idx]
-        st.write(f"- **{b['name']}** (Due Day: {b.get('due_day')}, Frequency: {b.get('frequency','Monthly')})")
+        st.write(f"- **{b.get('name','')}** (Due Day: {b.get('due_day')}, Frequency: {b.get('frequency','Monthly')}, Category: {b.get('category','OTHER')})")
         if b.get("frequency") == "Annual" and int(b.get("annual_month", 0) or 0) not in range(1, 13):
-            st.write("  ↳ ⚠️ Missing Month (set it when the bill appears, or edit it by switching it to Annual and picking a Month)")
+            st.write("  ↳ ⚠️ Annual bill missing Month (set Annual Month in the Edit Bills table)")
     st.caption("Tip: This view only shows the current pay windows. Advance First Pay Date to see future bills.")
