@@ -1,8 +1,8 @@
 name,amount,category,due_day,frequency,annual_month,meta_pay_date,meta_inc_pay_0,meta_inc_rent_0,meta_inc_other_0,meta_inc_pay_1,meta_inc_rent_1,meta_inc_other_1
 FC - Gym,29.22,OTHER,1,Monthly,0,2025-12-19,1944.31,0.0,0.0,1944.31,0,0.0
-Rent,1400.0,HOUSING,1,Monthly,0,2025-12-19,1944.31,0.0,0.0,1944.31,0,0.0
 Walmart +,120.25,ENTERTAINMENT,2,Annual,4,2025-12-19,1944.31,0.0,0.0,1944.31,0,0.0
 Life360,27.05,OTHER,3,Monthly,0,2025-12-19,1944.31,0.0,0.0,1944.31,0,0.0
+Rent,1400.0,HOUSING,4,Monthly,0,2025-12-19,1944.31,0.0,0.0,1944.31,0,0.0
 AHS,311.36,HOUSING,5,Monthly,0,2025-12-19,1944.31,0.0,0.0,1944.31,0,0.0
 Car Insurance - Ny,311.36,Insurance,5,Monthly,0,2025-12-19,1944.31,0.0,0.0,1944.31,0,0.0
 MCM,99.47,LOANS,6,Monthly,0,2025-12-19,1944.31,0.0,0.0,1944.31,0,0.0
