@@ -75,7 +75,7 @@ def load_last_month_data():
         if 'annual_month' not in df.columns: df['annual_month'] = 0
         if 'due_day' not in df.columns: df['due_day'] = 1
 
-        # SORTING FIX: Keep bills in order by Day, then Name
+        # SORTING FIX: Consistently sort by Day then Name
         df = df.sort_values(by=['due_day', 'name'])
             
         if not df.empty and 'meta_pay_date' in df.columns:
@@ -265,7 +265,7 @@ with st.sidebar:
     
     st.divider()
     if st.button("💾 Save & Close Month"):
-        # SORTING FIX: Consistently sort by Day then Name
+        # Explicit sort to prevent jumbling
         df_save = pd.DataFrame(st.session_state.bills)
         df_save = df_save.sort_values(by=['due_day', 'name'])
         
@@ -291,17 +291,18 @@ displayed_indices = []
 
 for i, p_date in enumerate(pay_periods):
     p_num = i + 1
-    # Define the "End Date" for this pay period
-    # If there is a next pay period, end the day before that.
-    # If this is the last one, go out 15 days.
+    
+    # DETERMINE WINDOW START AND END
+    window_start = p_date
     if i + 1 < len(pay_periods):
-        next_pay_date = pay_periods[i+1]
+        window_end = pay_periods[i+1] # End when next pay starts
     else:
-        next_pay_date = p_date + timedelta(days=15)
+        # Last pay period view: look ahead 35 days to catch everything remaining in month/next month
+        window_end = p_date + timedelta(days=35)
 
     with cols[i]:
         st.header(f"Pay #{p_num}")
-        st.caption(f"{p_date.strftime('%b %d')} - {next_pay_date.strftime('%b %d')}")
+        st.caption(f"{window_start.strftime('%b %d')} - {window_end.strftime('%b %d')}")
         
         with st.expander("💸 Income", expanded=False):
             val_pay = st.session_state.get(f'restored_pay_{i}', 2449.0)
@@ -325,29 +326,28 @@ for i, p_date in enumerate(pay_periods):
             elif freq == 'Annual': 
                 if p_date.month == int(bill.get('annual_month', 0)): include = True
             else:
-                # --- INTELLIGENT DATE CALCULATION ---
                 d_day = int(bill['due_day'])
                 
-                # Create a "Real Date" for this bill based on the Pay Period Month
+                # --- ROBUST DATE CHECK ---
+                # Check 2 possible dates: 
+                # 1. This Month's Occurrence (e.g. Jan 1)
+                # 2. Next Month's Occurrence (e.g. Feb 1)
+                
                 try:
-                    # Start by assuming the bill is in the same month as the Pay Date
-                    bill_date = datetime(p_date.year, p_date.month, d_day)
+                    candidates = []
+                    # Candidate 1: Same month as pay date
+                    candidates.append(datetime(p_date.year, p_date.month, d_day))
+                    # Candidate 2: Next month
+                    candidates.append(datetime(p_date.year, p_date.month, d_day) + relativedelta(months=1))
                 except ValueError:
-                    # Handle invalid dates (e.g. Feb 30) by skipping or clamping
-                    bill_date = datetime.max
+                    # Handle invalid dates (e.g., Feb 30) safely
+                    pass
 
-                # EDGE CASE: Month Rollover
-                # If Payday is Jan 28 and Bill is Day 2, we know that bill is meant for Feb 2.
-                # Logic: If bill_date is significantly before pay_date, move it to next month
-                if bill_date < p_date and (p_date.day > 20 and d_day < 15):
-                    if p_date.month == 12:
-                        bill_date = datetime(p_date.year + 1, 1, d_day)
-                    else:
-                        bill_date = datetime(p_date.year, p_date.month + 1, d_day)
-
-                # CHECK: Is this specific date inside this pay window?
-                if p_date <= bill_date < next_pay_date:
-                    include = True
+                # If ANY candidate date falls inside the pay window, show the bill
+                for c in candidates:
+                    if window_start <= c < window_end:
+                        include = True
+                        break
 
             if include: 
                 period_bills.append(idx)
@@ -374,7 +374,9 @@ for i, p_date in enumerate(pay_periods):
 # --- WARNING FOR ORPHANED BILLS ---
 missing_indices = [i for i in range(len(st.session_state.bills)) if i not in displayed_indices]
 if missing_indices:
-    st.warning("⚠️ Some bills are not visible in the columns above (check Due Dates vs Pay Dates):")
+    st.divider()
+    st.warning("⚠️ The following bills are not visible in any column:")
     for idx in missing_indices:
         b = st.session_state.bills[idx]
-        st.write(f"- {b['name']} (Due: {b['due_day']})")
+        st.write(f"- **{b['name']}** (Due Day: {b['due_day']})")
+    st.caption("Tip: Check if the Due Day is correct, or if it falls outside the current 1-month view.")
