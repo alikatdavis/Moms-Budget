@@ -69,17 +69,15 @@ def load_last_month_data():
     if df is not None:
         df = df.fillna(0)
         
-        # Ensure standard columns exist
         if 'frequency' not in df.columns: df['frequency'] = 'Monthly'
         else: df['frequency'] = df['frequency'].fillna('Monthly')
             
         if 'annual_month' not in df.columns: df['annual_month'] = 0
         if 'due_day' not in df.columns: df['due_day'] = 1
 
-        # FIX #2: SORT BILLS BY DAY TO PREVENT JUMBLING
+        # SORTING FIX: Keep bills in order by Day, then Name
         df = df.sort_values(by=['due_day', 'name'])
             
-        # Restore Income settings if they exist
         if not df.empty and 'meta_pay_date' in df.columns:
             try:
                 st.session_state['restored_date'] = pd.to_datetime(df.iloc[0]['meta_pay_date']).date()
@@ -262,21 +260,19 @@ with st.sidebar:
     pay_date_2 = pay_date_1 + timedelta(weeks=2)
     pay_date_3 = pay_date_1 + timedelta(weeks=4)
     
-    # DETERMINE IF 3 PAYCHECKS
-    # Logic: If Pay 3 is in the SAME month as Pay 1, or forced by user
     is_three_pay_month = (pay_date_1.month == pay_date_3.month)
     show_3 = st.checkbox("Force 3-Paycheck View", value=is_three_pay_month)
     
     st.divider()
     if st.button("💾 Save & Close Month"):
-        # Explicitly sort bills by day before saving to keep order consistent
+        # SORTING FIX: Consistently sort by Day then Name
         df_save = pd.DataFrame(st.session_state.bills)
         df_save = df_save.sort_values(by=['due_day', 'name'])
         
         df_save['meta_pay_date'] = pay_date_1
         for i in range(2):
             df_save[f'meta_inc_pay_{i}'] = st.session_state.get(f'pay_{i}', 2449.0)
-            df_save[f'meta_inc_rent_{i}'] = st.session_state.get(f'rent_{i}', 0.0) if i == 0 else 0
+            df_save[f'meta_inc_rent_{i}'] = st.session_state.get(f'rent_{i}', 2100.0) if i == 0 else 0
             df_save[f'meta_inc_other_{i}'] = st.session_state.get(f'other_{i}', 0.0)
         
         filename = f"{current_month_name}.csv"
@@ -290,21 +286,22 @@ cols = st.columns(3 if show_3 else 2)
 pay_periods = [pay_date_1, pay_date_2]
 if show_3: pay_periods.append(pay_date_3)
 
-# Track which bills are displayed to find orphaned ones
+# Track displayed bills
 displayed_indices = []
 
 for i, p_date in enumerate(pay_periods):
     p_num = i + 1
-    # FIX #1: Better Date Logic
-    # Pay 1: From P1 up to P2
-    # Pay 2: From P2 up to P3 (or end of month)
-    # Pay 3: From P3 onwards
-    
-    next_date = pay_periods[i+1] if i + 1 < len(pay_periods) else p_date + timedelta(days=32)
-    
+    # Define the "End Date" for this pay period
+    # If there is a next pay period, end the day before that.
+    # If this is the last one, go out 15 days.
+    if i + 1 < len(pay_periods):
+        next_pay_date = pay_periods[i+1]
+    else:
+        next_pay_date = p_date + timedelta(days=15)
+
     with cols[i]:
         st.header(f"Pay #{p_num}")
-        st.caption(f"{p_date.strftime('%b %d')} Onwards")
+        st.caption(f"{p_date.strftime('%b %d')} - {next_pay_date.strftime('%b %d')}")
         
         with st.expander("💸 Income", expanded=False):
             val_pay = st.session_state.get(f'restored_pay_{i}', 2449.0)
@@ -324,27 +321,33 @@ for i, p_date in enumerate(pay_periods):
             include = False
             
             if freq == 'Every 2 Weeks': 
-                include = True # Simplified: assumes splitting bills across checks
+                include = True
             elif freq == 'Annual': 
                 if p_date.month == int(bill.get('annual_month', 0)): include = True
             else:
-                d = int(bill['due_day'])
-                # FIX #1 LOGIC:
-                # If this is the LAST column displayed, catch everything after this date
-                is_last_col = (i == len(pay_periods) - 1)
+                # --- INTELLIGENT DATE CALCULATION ---
+                d_day = int(bill['due_day'])
                 
-                if not is_last_col:
-                    # Show if day is >= this pay date AND < next pay date
-                    # Handle month rollover roughly by day number
-                    if p_date.day <= d < next_date.day:
-                        include = True
-                else:
-                    # Last column: Show if day >= this pay date
-                    if d >= p_date.day:
-                        include = True
-                    # catch edge case: bills due on 1st/2nd when Pay 2 is on 28th
-                    if d < p_date.day and d < 5 and p_date.day > 20:
-                        include = True
+                # Create a "Real Date" for this bill based on the Pay Period Month
+                try:
+                    # Start by assuming the bill is in the same month as the Pay Date
+                    bill_date = datetime(p_date.year, p_date.month, d_day)
+                except ValueError:
+                    # Handle invalid dates (e.g. Feb 30) by skipping or clamping
+                    bill_date = datetime.max
+
+                # EDGE CASE: Month Rollover
+                # If Payday is Jan 28 and Bill is Day 2, we know that bill is meant for Feb 2.
+                # Logic: If bill_date is significantly before pay_date, move it to next month
+                if bill_date < p_date and (p_date.day > 20 and d_day < 15):
+                    if p_date.month == 12:
+                        bill_date = datetime(p_date.year + 1, 1, d_day)
+                    else:
+                        bill_date = datetime(p_date.year, p_date.month + 1, d_day)
+
+                # CHECK: Is this specific date inside this pay window?
+                if p_date <= bill_date < next_pay_date:
+                    include = True
 
             if include: 
                 period_bills.append(idx)
